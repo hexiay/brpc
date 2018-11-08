@@ -1,3 +1,68 @@
+# Table of Content
+
+       atomic_instructions.md
+       auto_concurrency_limiter.md
+       avalanche.md
+       backup_request.md
+       baidu_std.md
+       benchmark.md
+       benchmark_http.md
+       bthread.md
+       bthread_id.md
+       bthread_or_not.md
+       builtin_service.md
+       bvar.md
+       bvar_c++.md
+       case_apicontrol.md
+       case_baidu_dsp.md
+       case_elf.md
+       case_ubrpc.md
+       client.md
+       combo_channel.md
+       connections.md
+       consistent_hashing.md
+       contention_profiler.md
+       cpu_profiler.md
+       dummy_server.md
+       error_code.md
+       execution_queue.md
+       flags.md
+       flatmap.md
+       getting_started.md
+       heap_profiler.md
+       http_client.md
+       http_derivatives.md
+       http_service.md
+       io.md
+       iobuf.md
+       json2pb.md
+       lalb.md
+       load_balancing.md
+       memcache_client.md
+       memory_management.md
+       new_protocol.md
+       nshead_service.md
+       overview.md
+       parallel_http.md
+       redis_client.md
+       rpc_press.md
+       rpc_replay.md
+       rpc_view.md
+       rpcz.md
+       server.md
+       server_debugging.md
+       server_push.md
+       status.md
+       streaming_log.md
+       streaming_rpc.md
+       thread_local.md
+       threading_overview.md
+       thrift.md
+       timer_keeping.md
+       ub_client.md
+       vars.md
+
+# ========= ./atomic_instructions.md ========
 [English version](../en/atomic_instructions.md)
 
 我们都知道多核编程常用锁避免多个线程在修改同一个数据时产生[race condition](http://en.wikipedia.org/wiki/Race_condition)。当锁成为性能瓶颈时，我们又总想试着绕开它，而不可避免地接触了原子指令。但在实践中，用原子指令写出正确的代码是一件非常困难的事，琢磨不透的race condition、[ABA problem](https://en.wikipedia.org/wiki/ABA_problem)、[memory fence](https://en.wikipedia.org/wiki/Memory_barrier)很烧脑，这篇文章试图通过介绍[SMP](http://en.wikipedia.org/wiki/Symmetric_multiprocessing)架构下的原子指令帮助大家入门。C++11正式引入了[原子指令](http://en.cppreference.com/w/cpp/atomic/atomic)，我们就以其语法描述。
@@ -106,6 +171,8 @@ if (ready.load(std::memory_order_acquire)) {
 
 mutex导致低性能往往是因为临界区过大（限制了并发度），或竞争过于激烈（上下文切换开销变得突出）。lock-free/wait-free算法的价值在于其保证了一个或所有线程始终在做有用的事，而不是绝对的高性能。但在一种情况下lock-free和wait-free算法的性能多半更高：就是算法本身可以用少量原子指令实现。实现锁也是要用原子指令的，当算法本身用一两条指令就能完成的时候，相比额外用锁肯定是更快了。
 
+
+# ========= ./auto_concurrency_limiter.md ========
 # 自适应限流
 
 服务的处理能力是有客观上限的。当请求速度超过服务的处理速度时，服务就会过载。
@@ -260,6 +327,8 @@ netflix中的gradient算法公式为：max_concurrency = min_latency / latency *
 min_latency前，若所有latency都小于min_latency，那么max_concurrency会不断下降甚至到0；但按照本算法，max_qps和min_latency仍然是稳定的，它们计算出的max_concurrency也不会剧烈变动。究其本质，gradient算法在迭代max_concurrency时，latency并不能代表实际并发为max_concurrency时的延时，两者是脱节的，所以max_concurrency / latency的实际物理含义不明，与qps可能差异甚大，最后导致了很大的偏差。
 * gradient算法的queue_size推荐为sqrt(max_concurrency)，这是不合理的。netflix对queue_size的理解大概是代表各种不可控环节的缓存，比如socket里的，和max_concurrency存在一定的正向关系情有可原。但在我们的理解中，这部分queue_size作用微乎其微，没有或用常量即可。我们关注的queue_size是给concurrency上升留出的探索空间: max_concurrency的更新是有延迟的，在并发从低到高的增长过程中，queue_size的作用就是在max_concurrency更新前不限制qps上升。而当concurrency高时，服务可能已经过载了，queue_size就应该小一点，防止进一步恶化延时。这里的queue_size和并发是反向关系。
 
+
+# ========= ./avalanche.md ========
 “雪崩”指的是访问服务集群时绝大部分请求都超时，且在流量减少时仍无法恢复的现象。下面解释这个现象的来源。
 
 当流量超出服务的最大qps时，服务将无法正常服务；当流量恢复正常时（小于服务的处理能力），积压的请求会被处理，虽然其中很大一部分可能会因为处理的不及时而超时，但服务本身一般还是会恢复正常的。这就相当于一个水池有一个入水口和一个出水口，如果入水量大于出水量，水池子终将盛满，多出的水会溢出来。但如果入水量降到出水量之下，一段时间后水池总会排空。雪崩并不是单一服务能产生的。
@@ -282,6 +351,8 @@ min_latency前，若所有latency都小于min_latency，那么max_concurrency会
 1. 评估server的最大并发，设置合理的max_concurrency值。这个默认是不设的，也就是不限制。无论程序是同步还是异步，用户都可以通过 **最大qps \* 非拥塞时的延时**（秒）来评估最大并发，原理见[little's law](https://en.wikipedia.org/wiki/Little%27s_law)，这两个量都可以在brpc中的内置服务中看到。max_concurrency与最大并发相等或大一些就行了。
 2. 注意考察重试发生时的行为，特别是在定制RetryPolicy时。如果你只是用默认的brpc重试，一般是安全的。但用户程序也常会自己做重试，比如通过一个Channel访问失败后，去访问另外一个Channel，这种情况下要想清楚重试发生时最差情况下请求量会放大几倍，服务是否可承受。
 
+
+# ========= ./backup_request.md ========
 有时为了保证可用性，需要同时访问两路服务，哪个先返回就取哪个。在brpc中，这有多种做法：
 
 # 当后端server可以挂在一个命名服务内时
@@ -329,6 +400,8 @@ my_func_latency << tm.u_elapsed();  // u代表微秒，还有s_elapsed(), m_elap
 
 【不推荐】发起两个异步RPC后Join它们，它们的done内是相互取消的逻辑。示例代码见[example/cancel_c++](https://github.com/brpc/brpc/tree/master/example/cancel_c++)。这种方法的问题是总会发两个请求，对后端服务有两倍压力，这个方法怎么算都是不经济的，你应该尽量避免用这个方法。
 
+
+# ========= ./baidu_std.md ========
 # 介绍
 
 baidu_std是一种基于TCP协议的二进制RPC通信协议。它以Protobuf作为基本的数据交换格式，并基于Protobuf内置的RPC Service形式，规定了通信双方之间的数据交换协议，以实现完整的RPC调用。
@@ -488,6 +561,8 @@ message RpcResponseMeta {
 URL和JSON中的字符编码一律使用UTF-8。
 
 建议使用RESTful形式的Web Service接口。由于RESTful并非一个严格的规范，本规范对此不做强制规定。
+
+# ========= ./benchmark.md ========
 NOTE: following tests were done in 2015, which may not reflect latest status of the package.
 
 # 序言
@@ -712,12 +787,16 @@ hulu-pbrpc: 单机表现和sofa-pbrpc类似，但多机的延时表现极差。
 gRPC: 几乎在所有参与的测试中垫底，可能它的定位是给google cloud platform的用户提供一个多语言，对网络友好的实现，性能还不是要务。
 
 
+
+# ========= ./benchmark_http.md ========
 可代替[ab](https://httpd.apache.org/docs/2.2/programs/ab.html)测试http server极限性能。ab功能较多但年代久远，有时本身可能会成为瓶颈。benchmark_http基本上就是一个brpc http client，性能很高，功能较少，一般压测够用了。
 
 使用方法：
 
 首先你得[下载和编译](getting_started.md)了brpc源码，然后去example/http_c++目录编译，成功后应该能看到benchmark_http。
 
+
+# ========= ./bthread.md ========
 [bthread](https://github.com/brpc/brpc/tree/master/src/bthread)是brpc使用的M:N线程库，目的是在提高程序的并发度的同时，降低编码难度，并在核数日益增多的CPU上提供更好的scalability和cache locality。”M:N“是指M个bthread会映射至N个pthread，一般M远大于N。由于linux当下的pthread实现([NPTL](http://en.wikipedia.org/wiki/Native_POSIX_Thread_Library))是1:1的，M个bthread也相当于映射至N个[LWP](http://en.wikipedia.org/wiki/Light-weight_process)。bthread的前身是Distributed Process(DP)中的fiber，一个N:1的合作式线程库，等价于event-loop库，但写的是同步代码。
 
 # Goals
@@ -785,6 +864,8 @@ pthread worker在任何时间只会运行一个bthread，当前bthread挂起时�
 
 我们需要的往往是buffered channel，扮演的是队列和有序执行的作用，bthread提供了[ExecutionQueue](execution_queue.md)，可以完成这个目的。
 
+
+# ========= ./bthread_id.md ========
 bthread_id是一个特殊的同步结构，它可以互斥RPC过程中的不同环节，也可以O(1)时间内找到RPC上下文(即Controller)。注意，这里我们谈论的是bthread_id_t，不是bthread_t（bthread的tid），这个名字起的确实不太好，容易混淆。
 
 具体来说，bthread_id解决的问题有：
@@ -813,6 +894,8 @@ bthread_id的接口不太简洁，有不少API：
 - 发送request的流程：create -> lock -> ... register timer and send RPC ... -> unlock
 - 接收response的流程：lock -> ..process response -> call done
 
+
+# ========= ./bthread_or_not.md ========
 brpc提供了[异步接口](client.md#异步访问)，所以一个常见的问题是：我应该用异步接口还是bthread？
 
 短回答：延时不高时你应该先用简单易懂的同步接口，不行的话用异步接口，只有在需要多核并行计算时才用bthread。
@@ -873,6 +956,8 @@ bool search() {
 
 另外当你有类似线程池的需求时，像执行一类job的线程池时，也可以用bthread代替。如果对job的执行顺序有要求，你可以使用基于bthread的[ExecutionQueue](execution_queue.md)。
 
+
+# ========= ./builtin_service.md ========
 [English version](../en/builtin_service.md)
 
 # 什么是内置服务？
@@ -930,6 +1015,8 @@ bool search() {
 /dir: 浏览服务器上的所有文件，方便但非常危险，默认关闭。
 
 /threads: 查看进程内所有线程的运行状况，调用时对程序性能影响较大，默认关闭。
+
+# ========= ./bvar.md ========
 [English version](../en/bvar.md)
 
 # 什么是bvar？
@@ -1022,6 +1109,8 @@ process_username : "gejun"
 
 ![img](../images/bvar_noah3.png)
 
+
+# ========= ./bvar_c++.md ========
 # Quick introduction
 
 ```c++
@@ -1035,19 +1124,23 @@ bvar::Adder<int> g_read_error;
 // 把bvar::Window套在其他bvar上就可以获得时间窗口内的值。
 bvar::Window<bvar::Adder<int> > g_read_error_minute("foo_bar", "read_error", &g_read_error, 60);
 //                                                     ^          ^                         ^
-//                                                    前缀       监控项名称                  60秒,忽略则为10秒
+//                                                    前缀       监控项名称                  60秒,
+// 忽略则为10秒
 
 // bvar::LatencyRecorder是一个复合变量，可以统计：总量、qps、平均延时，延时分位值，最大延时。
 bvar::LatencyRecorder g_write_latency(“foo_bar", "write”);
 //                                      ^          ^
-//                                     前缀       监控项，别加latency！LatencyRecorder包含多个bvar，它们会加上各自的后缀，比如write_qps, write_latency等等。
+//                                     前缀       监控项，别加latency！LatencyRecorder包含多个bvar，
+//它们会加上各自的后缀，比如write_qps, write_latency等等。
 
 // 定义一个统计“已推入task”个数的变量。
 bvar::Adder<int> g_task_pushed("foo_bar", "task_pushed");
 // 把bvar::PerSecond套在其他bvar上可以获得时间窗口内*平均每秒*的值，这里是每秒内推入task的个数。
-bvar::PerSecond<bvar::Adder<int> > g_task_pushed_second("foo_bar", "task_pushed_second", &g_task_pushed);
+bvar::PerSecond<bvar::Adder<int> > g_task_pushed_second("foo_bar", "task_pushed_second",
+ &g_task_pushed);
 //       ^                                                                                             ^
-//    和Window不同，PerSecond会除以时间窗口的大小.                                   时间窗口是最后一个参数，这里没填，就是默认10秒。
+//    和Window不同，PerSecond会除以时间窗口的大小.                                   
+//时间窗口是最后一个参数，这里没填，就是默认10秒。
 
 }  // bar
 }  // foo
@@ -1188,8 +1281,10 @@ CHECK_EQ("60", bvar::Variable::describe_exposed("another_name_for_count1"));
 bvar::Adder<int> count2("count2");  // exposed in constructor directly
 CHECK_EQ("0", bvar::Variable::describe_exposed("count2"));  // default value of Adder<int> is 0
 
-bvar::Status<std::string> status1("count2", "hello");  // the name conflicts. if -bvar_abort_on_same_name is true,
-                                                       // program aborts, otherwise a fatal log is printed.
+bvar::Status<std::string> status1("count2", "hello");  // the name conflicts. 
+if -bvar_abort_on_same_name is true,
+                                                       // program aborts, 
+                                                       otherwise a fatal log is printed.
 ```
 
 为避免重名，bvar的名字应加上前缀，建议为<namespace>_<module>_<name>。为了方便使用，我们提供了**expose_as**函数，接收一个前缀。
@@ -1213,9 +1308,11 @@ int expose_as(const butil::StringPiece& prefix, const butil::StringPiece& name);
 
 # Export all variables
 
-最常见的导出需求是通过HTTP接口查询和写入本地文件。前者在brpc中通过[/vars](vars.md)服务提供，后者则已实现在bvar中，默认不打开。有几种方法打开这个功能：
+最常见的导出需求是通过HTTP接口查询和写入本地文件。前者在brpc中通过[/vars](vars.md)服务提供，后者则已实现在bvar中，
+默认不打开。有几种方法打开这个功能：
 
-- 用[gflags](flags.md)解析输入参数，在程序启动时加入-bvar_dump，或在brpc中也可通过[/flags](flags.md)服务在启动后动态修改。gflags的解析方法如下，在main函数处添加如下代码:
+- 用[gflags](flags.md)解析输入参数，在程序启动时加入-bvar_dump，或在brpc中也可通过[/flags](flags.md)服
+务在启动后动态修改。gflags的解析方法如下，在main函数处添加如下代码:
 
 ```c++
   #include <gflags/gflags.h>
@@ -1518,6 +1615,8 @@ static bvar::GFlag s_gflag_my_flag_that_matters("my_flag_that_matters");
 static bvar::GFlag s_gflag_my_flag_that_matters_with_prefix("foo_bar", "my_flag_that_matters");
 ```
 
+
+# ========= ./case_apicontrol.md ========
 # 进展
 
 | 时间          | 内容                                    | 说明             |
@@ -1569,6 +1668,8 @@ QA测试结论：通过
 **总线程数(个)**（红色为升级前，蓝色为升级后）
 ![img](../images/apicontrol_compare_5.png)
 
+
+# ========= ./case_baidu_dsp.md ========
 # 背景
 
 baidu-dsp是联盟基于Ad Exchange和RTB模式的需求方平台，服务大客户、代理的投放产品体系。我们改造了多个模块，均取得了显著的效果。本文只介绍其中关于super-nova-as的改动。super-nova-as是的baidu-dsp的AS，之前使用ub-aserver编写，为了尽量减少改动，我们没有改造整个as，而只是把super-nova-as连接下游（ctr-server、cvr-server、super-nova-bs）的client从ubrpc升级为brpc。
@@ -1593,6 +1694,8 @@ baidu-dsp是联盟基于Ad Exchange和RTB模式的需求方平台，服务大客
 | ctr成功率   | ![img](../images/baidu_dsp_compare_7.png) | ![img](../images/baidu_dsp_compare_8.png) |
 | cvr成功率   | ![img](../images/baidu_dsp_compare_9.png) | ![img](../images/baidu_dsp_compare_10.png) |
 
+
+# ========= ./case_elf.md ========
 # 背景
 
 ELF(Essential/Extreme/Excellent Learning Framework) 框架为公司内外的大数据应用提供学习/挖掘算法开发支持。 平台主要包括数据迭代处理的框架支持，并行计算过程中的通信支持和用于存储大规模参数的分布式、快速、高可用参数服务器。应用于fcr-model，公有云bml，大数据实验室，语音技术部门等等。之前是基于[zeromq](http://zeromq.org/)封装的rpc，这次改用brpc。
@@ -1681,6 +1784,8 @@ Total: 8664 samples
       32   0.4%  89.0%       32   0.4% std::__insertion_sort
 ```
 
+
+# ========= ./case_ubrpc.md ========
 # 背景
 
 云平台部把使用ubrpc的模块改造为使用brpc。由于使用了mcpack2pb的转换功能，这个模块既能被老的ubrpc client访问，也可以通过protobuf类的协议访问（baidu_std，sofa_pbrpc等）。
@@ -1727,6 +1832,8 @@ qps固定为6500，观察延时。
 * ubrpc cpu idle分布在35%~60%，在55%最集中，最低30%； 
 * brpc cpu idle分布在60%~85%，在75%最集中，最低50%； brpc比ubrpc对cpu的消耗低。
 
+
+# ========= ./client.md ========
 [English version](../en/client.md)
 
 # 示例程序
@@ -2577,6 +2684,8 @@ FATAL 04-07 20:00:03 7778 src/brpc/channel.cpp:123] Invalid address=`bns://group
 12. 根据协议格式反序列化response。
 13. 调用Controller::OnRPCReturned，可能会根据错误码判断是否需要重试，或让RPC结束。如果是异步发送，调用用户回调。最后摧毁correlation_id唤醒Join着的线程。
 
+
+# ========= ./combo_channel.md ========
 [English version](../en/combo_channel.md)
 
 随着服务规模的增大，对下游的访问流程会越来越复杂，其中往往包含多个同时发起的RPC或有复杂的层次结构。但这类代码的多线程陷阱很多，用户可能写出了bug也不自知，复现和调试也比较困难。而且实现要么只能支持同步的情况，要么要么得为异步重写一套。以"在多个异步RPC完成后运行一些代码"为例，它的同步实现一般是异步地发起多个RPC，然后逐个等待各自完成；它的异步实现一般是用一个带计数器的回调，每当一个RPC完成时计数器减一，直到0时调用回调。可以看到它的缺点：
@@ -2767,7 +2876,8 @@ if (schan.Init(load_balancer, &schan_options) != 0) {
 初始化完毕后通过AddChannel加入sub channel。
 
 ```c++
-if (schan.AddChannel(sub_channel, NULL/*ChannelHandle*/) != 0) {  // 第二个参数ChannelHandle用于删除sub channel，不用删除可填NULL
+if (schan.AddChannel(sub_channel, NULL/*ChannelHandle*/) != 0) {  
+    // 第二个参数ChannelHandle用于删除sub channel，不用删除可填NULL
     LOG(ERROR) << "Fail to add sub_channel";
     return -1;
 }
@@ -2870,7 +2980,8 @@ brpc::PartitionChannel channel;
 brpc::PartitionChannelOptions options;
 options.protocol = ...;   // PartitionChannelOptions继承了ChannelOptions，后者有的前者也有
 options.timeout_ms = ...; // 同上
-options.fail_limit = 1;   // PartitionChannel自己的选项，意思同ParalellChannel中的fail_limit。这里为1的意思是只要有1个分库访问失败，这次RPC就失败了。
+options.fail_limit = 1;   // PartitionChannel自己的选项，意思同ParalellChannel中的fail_limit。
+//这里为1的意思是只要有1个分库访问失败，这次RPC就失败了。
  
 if (channel.Init(num_partition_kinds, new MyPartitionParser(),
                  server_address, load_balancer, &options) != 0) {
@@ -3064,6 +3175,8 @@ TRACE: 09-06 11:17:50:   * 0 server.cpp:192] S[0]=0 S[1]=250198 S[2]=250150 [tot
 
 在真实的线上环境中，我们会逐渐地增加4分库的server，同时下掉3分库中的server。DynamicParititonChannel会按照每种分库方式的容量动态切分流量。当某个时刻3分库的容量变为0时，我们便平滑地把Server从3分库变为了4分库，同时并没有修改Client的代码。
 
+
+# ========= ./connections.md ========
 [connections服务](http://brpc.baidu.com:8765/connections)可以查看所有的连接。一个典型的页面如下：
 
 server_socket_count: 5
@@ -3117,6 +3230,8 @@ channel_short_socket_count: 0
 短连接：![img](../images/short_conn.png)
 
 
+
+# ========= ./consistent_hashing.md ========
 # 概述
 
 一些场景希望同样的请求尽量落到一台机器上，比如访问缓存集群时，我们往往希望同一种请求能落到同一个后端上，以充分利用其上已有的缓存，不同的机器承载不同的稳定working set。而不是随机地散落到所有机器上，那样的话会迫使所有机器缓存所有的内容，最终由于存不下形成颠簸而表现糟糕。 我们都知道hash能满足这个要求，比如当有n台服务器时，输入x总是会发送到第hash(x) % n台服务器上。但当服务器变为m台时，hash(x) % n和hash(x) % m很可能都不相等，这会使得几乎所有请求的发送目的地都发生变化，如果目的地是缓存服务，所有缓存将失效，继而对原本被缓存遮挡的数据库或计算服务造成请求风暴，触发雪崩。一致性哈希是一种特殊的哈希算法，在增加服务器时，发向每个老节点的请求中只会有一部分转向新节点，从而实现平滑的迁移。[这篇论文](http://blog.phpdr.net/wp-content/uploads/2012/08/Consistent-Hashing-and-Random-Trees.pdf)中提出了一致性hash的概念。
@@ -3155,6 +3270,8 @@ channel_short_socket_count: 0
 
 > request的hash算法并不需要和lb的hash算法保持一致，只需要hash的值域是32位无符号整数。由于memcache默认使用md5，访问memcached集群时请选择c_md5保证兼容性， 其他场景可以选择c_murmurhash以获得更高的性能和更均匀的分布。
 
+
+# ========= ./contention_profiler.md ========
 brpc可以分析花在等待锁上的时间及发生等待的函数。
 
 # 开启方法
@@ -3187,6 +3304,8 @@ r31906后brpc支持contention profiler，可以分析在等待锁上花费了多
 
 ![img](../images/raft_contention_3.png)
 
+
+# ========= ./cpu_profiler.md ========
 brpc可以分析程序中的热点函数。
 
 # 开启方法
@@ -3288,6 +3407,8 @@ Total: 2954 samples
 1. 安装[standalone pprof](https://github.com/google/pprof)，并把下载的pprof二进制文件路径写入环境变量GOOGLE_PPROF_BINARY_PATH中
 2. 安装llvm-symbolizer（将函数符号转化为函数名），直接用brew安装即可：`brew install llvm`
 
+
+# ========= ./dummy_server.md ========
 如果你的程序只使用了brpc的client或根本没有使用brpc，但你也想使用brpc的内置服务，只要在程序中启动一个空的server就行了，这种server我们称为**dummy server**。
 
 # 使用了brpc的client
@@ -3313,6 +3434,8 @@ int main() {
 }
 ```
 
+
+# ========= ./error_code.md ========
 [English version](../en/error_code.md)
 
 brpc使用[brpc::Controller](https://github.com/brpc/brpc/blob/master/src/brpc/controller.h)设置和获取一次RPC的参数，`Controller::ErrorCode()`和`Controller::ErrorText()`则分别是该次RPC的错误码和错误描述，RPC结束后才能访问，否则结果未定义。ErrorText()由Controller的基类google::protobuf::RpcController定义，ErrorCode()则是brpc::Controller定义的。Controller还有个Failed()方法告知该次RPC是否失败，这三者的关系是：
@@ -3394,6 +3517,8 @@ Fail to define EMYERROR(30) which is already defined as `Read-only file system',
 - 多个交互的模块使用同一份错误码定义，防止后续修改时产生不一致。
 - 使用BAIDU_REGISTER_ERRNO描述新错误码，以确保同一个进程内错误码是互斥的。 
 
+
+# ========= ./execution_queue.md ========
 # 概述
 
 类似于kylin的ExecMan, [ExecutionQueue](https://github.com/brpc/brpc/blob/master/src/bthread/execution_queue.h)提供了异步串行执行的功能。ExecutionQueue的相关技术最早使用在RPC中实现[多线程向同一个fd写数据](io.md#发消息). 在r31345之后加入到bthread。 ExecutionQueue 提供了如下基本功能:
@@ -3582,6 +3707,8 @@ int execution_queue_cancel(const TaskHandle& h);
 
 返回非0仅仅意味着ExecutionQueue已经将对应的task递给过execute, 真实的逻辑中可能将这个task缓存在另外的容器中，所以这并不意味着逻辑上的task已经结束，你需要在自己的业务上保证这一点.
 
+
+# ========= ./flags.md ========
 brpc使用gflags管理配置。如果你的程序也使用gflags，那么你应该已经可以修改和brpc相关的flags，你可以浏览[flags服务](http://brpc.baidu.com:8765/flags)了解每个flag的具体功能。如果你的程序还没有使用gflags，我们建议你使用，原因如下：
 
 - 命令行和文件均可传入，前者方便做测试，后者适合线上运维。放在文件中的gflags可以reload。而configure只支持从文件读取配置。
@@ -3720,6 +3847,8 @@ health_check_interval (R) | 3 | seconds between consecutive health-checkings | s
 
 1.0.251.32399后增加了-immutable_flags，打开后所有的gflags将不能被动态修改。当一个服务对某个gflag值比较敏感且不希望在线上被误改，可打开这个开关。打开这个开关的同时也意味着你无法动态修改线上的配置，每次修改都要重启程序，对于还在调试阶段或待收敛阶段的程序不建议打开。
 
+
+# ========= ./flatmap.md ========
 # NAME
 
 FlatMap - Maybe the fastest hashmap, with tradeoff of space.
@@ -3834,6 +3963,8 @@ TRACE: 12-30 13:19:53:   * 0 [test_flat_map.cpp:637] Seeking 10000 from FlatMap/
 - 混合开链和闭链：一般是把桶数组中的一部分拿出来作为容纳冲突元素的空间，典型如[Coalesced hashing](http://en.wikipedia.org/wiki/Coalesced_hashing)，但这种结构没有解决开链的内存跳转问题，结构又比闭链复杂很多，工程效果并不好。
 - 多次哈希：一般用多个哈希表代替一个哈希表，当发生冲突时（用另一个哈希值）尝试另一个哈希表。典型如[Cuckoo hashing](http://en.wikipedia.org/wiki/Cuckoo_hashing)，这个结构也没有解决内存跳转。
 
+
+# ========= ./getting_started.md ========
 # BUILD
 
 brpc prefers static linkages of deps, so that they don't have to be installed on every machine running the app.
@@ -4242,6 +4373,8 @@ no known issues.
 
 We provide a program to help you to track and monitor all brpc instances. Just run [trackme_server](https://github.com/brpc/brpc/tree/master/tools/trackme_server/) somewhere and launch need-to-be-tracked instances with -trackme_server=SERVER. The trackme_server will receive pings from instances periodically and print logs when it does. You can aggregate instance addresses from the log and call builtin services of the instances for further information.
 
+
+# ========= ./heap_profiler.md ========
 brpc可以分析内存是被哪些函数占据的。heap profiler的原理是每分配满一些内存就采样调用处的栈，“一些”由环境变量TCMALLOC_SAMPLE_PARAMETER控制，默认524288，即512K字节。根据栈表现出的函数调用关系汇总为我们看到的结果图。在实践中heap profiler对原程序的影响不明显。
 
 # 开启方法
@@ -4352,6 +4485,8 @@ brpc还提供一个类似的growth profiler分析内存的分配去向（不考�
 1. 安装[standalone pprof](https://github.com/google/pprof)，并把下载的pprof二进制文件路径写入环境变量GOOGLE_PPROF_BINARY_PATH中
 2. 安装llvm-symbolizer（将函数符号转化为函数名），直接用brew安装即可：`brew install llvm`
 
+
+# ========= ./http_client.md ========
 [English version](../en/http_client.md)
 
 # 示例
@@ -4607,6 +4742,8 @@ brpc client支持在读取完body前就结束RPC，让用户在RPC结束后再�
 # 发送https请求
 https是http over SSL的简称，SSL并不是http特有的，而是对所有协议都有效。开启客户端SSL的一般性方法见[这里](client.md#开启ssl)。为方便使用，brpc会对https://开头的uri自动开启SSL。
 
+
+# ========= ./http_derivatives.md ========
 [English version](../en/http_derivatives.md)
 
 http/h2协议的基本用法见[http_client](http_client.md)和[http_service](http_service.md)
@@ -4645,6 +4782,8 @@ TODO: gRPC其他配置
 
 这个协议相比h2:grpc就是用json序列化结果代替pb序列化结果。gRPC未必直接支持这个格式，如grpc-go用户可参考[这里](https://github.com/johanbrandhorst/grpc-json-example/blob/master/codec/json.go)注册相应的codec后才支持。
 
+
+# ========= ./http_service.md ========
 [English version](../en/http_service.md)
 
 这里指我们通常说的http/h2服务，而不是可通过http/h2访问的pb服务。
@@ -4901,7 +5040,8 @@ if (cntl->http_response().status_code() == brpc::HTTP_STATUS_NOT_FOUND) {
 ...
 // Set Status code
 cntl->http_response().set_status_code(brpc::HTTP_STATUS_INTERNAL_SERVER_ERROR);
-cntl->http_response().set_status_code(brpc::HTTP_STATUS_INTERNAL_SERVER_ERROR, "My explanation of the error...");
+cntl->http_response().set_status_code(brpc::HTTP_STATUS_INTERNAL_SERVER_ERROR, 
+"My explanation of the error...");
 ```
 
 比如，以下代码以302错误实现重定向：
@@ -5029,6 +5169,8 @@ brpc server一个端口支持多种协议，当它无法解析某个http请求�
 
 一个解决方法是删除末尾的"=", 不影响Base64的[正常解码](http://en.wikipedia.org/wiki/Base64#Padding); 第二个方法是在对这个URI做[percent encoding](https://en.wikipedia.org/wiki/Percent-encoding)，解码时先做percent decoding再用Base64.
 
+
+# ========= ./io.md ========
 [English version](../en/io.md)
 
 一般有三种操作IO的方式：
@@ -5079,6 +5221,8 @@ linux一般使用non-blocking IO提高IO并发度。当IO并发度很低时，no
 
 ![img](../images/rpc_flow.png)
 
+
+# ========= ./iobuf.md ========
 [English version](../en/iobuf.md)
 
 brpc使用[butil::IOBuf](https://github.com/brpc/brpc/blob/master/src/butil/iobuf.h)作为一些协议中的附件或http body的数据结构，它是一种非连续零拷贝缓冲，在其他项目中得到了验证并有出色的性能。IOBuf的接口和std::string类似，但不相同。
@@ -5183,6 +5327,8 @@ IOBuf有不错的综合性能：
 | 文件读入->切割12+128字节->拷贝->合并到另一个缓冲->写出到/dev/null | 790.022MB/s | 5643014 |
 | 文件读入->切割12+1024字节->拷贝->合并到另一个缓冲->写出到/dev/null | 1519.99MB/s | 1467171 |
 
+
+# ========= ./json2pb.md ========
 brpc支持json和protobuf间的**双向**转化，实现于[json2pb](https://github.com/brpc/brpc/tree/master/src/json2pb/)，json解析使用[rapidjson](https://github.com/miloyip/rapidjson)。此功能对pb2.x和3.x均有效。pb3内置了[转换json](https://developers.google.com/protocol-buffers/docs/proto3#json)的功能。
 
 by design, 通过HTTP + json访问protobuf服务是对外服务的常见方式，故转化必须精准，转化规则列举如下。
@@ -5307,6 +5453,8 @@ required int32 foo = 3; <-- the real key
 - 确保被json访问的服务的proto文件最新。这样就不需要透传了，但越前端的服务越类似proxy，可能并不现实。
 - protobuf中定义特殊透传字段。比如名为unknown_json_fields，在解析对应的protobuf时特殊处理。此方案修改面广且对性能有一定影响，有明确需求时再议。
 
+
+# ========= ./lalb.md ========
 # 概述
 
 LALB全称Locality-aware load balancing，是一个能把请求及时、自动地送到延时最低的下游的负载均衡算法，特别适合混合部署环境。该算法产生自DP系统，现已加入brpc！
@@ -5459,6 +5607,8 @@ QPS和latency使用一个循环队列统计，默认容量128。我们可以使�
 
 这样“当前时间 - 发出时间之和 / 未结束次数”便是未结束RPC的平均耗时，我们称之为inflight delay。当inflight delay大于平均延时时，我们就线性地惩罚节点权值，即weight = base_weight * avg_latency / inflight_delay。当发向一个节点的请求没有在平均延时内回来时，它的权值就会很快下降，从而纠正我们的行为，这比等待超时快多了。不过这没有考虑延时的正常抖动，我们还得有方差，方差可以来自统计，也可简单线性于平均延时。不管怎样，有了方差bound后，当inflight delay > avg_latency + max(bound * 3, MIN_BOUND)时才会惩罚权值。3是正态分布中的经验数值。
 
+
+# ========= ./load_balancing.md ========
 上游一般通过命名服务发现所有的下游节点，并通过多种负载均衡方法把流量分配给下游节点。当下游节点出现问题时，它可能会被隔离以提高负载均衡的效率。被隔离的节点定期被健康检查，成功后重新加入正常节点。
 
 # 命名服务
@@ -5507,6 +5657,8 @@ Load balancer最重要的是如何让不同线程中的负载均衡不互斥，�
 - 定期连接直到远端机器被连接上，在这个过程中，如果Socket析构了，那么该线程也就随之退出了。
 - 连上后复活Socket(Socket::Revive)，这样Socket就又能被其他地方，包括LoadBalancer访问到了（通过Socket::Address）。
 
+
+# ========= ./memcache_client.md ========
 [English version](../en/memcache_client.md)
 
 [memcached](http://memcached.org/)是常用的缓存服务，为了使用户更快捷地访问memcached并充分利用bthread的并发能力，brpc直接支持memcache协议。示例程序：[example/memcache_c++](https://github.com/brpc/brpc/tree/master/example/memcache_c++/)
@@ -5610,6 +5762,8 @@ bool PopVersion(std::string* version);
 
 或者你可以沿用常见的[twemproxy](https://github.com/twitter/twemproxy)方案。这个方案虽然需要额外部署proxy，还增加了延时，但client端仍可以像访问单点一样的访问它。
 
+
+# ========= ./memory_management.md ========
 内存管理总是程序中的重要一环，在多线程时代，一个好的内存分配大都在如下两点间权衡：
 
 - 线程间竞争少。内存分配的粒度大都比较小，对性能敏感，如果不同的线程在大多数分配时会竞争同一份资源或同一把锁，性能将会非常糟糕，原因无外乎和cache一致性有关，已被大量的malloc方案证明。
@@ -5657,6 +5811,8 @@ bthread的大部分函数都需要在O(1)时间内通过bthread_t访问到TaskMe
 
 goroutine在1.3前通过[segmented stacks](https://gcc.gnu.org/wiki/SplitStacks)动态地调整栈大小，发现有[hot split](https://docs.google.com/document/d/1wAaf1rYoM4S4gtnPh0zOlGzWtrZFQ5suE8qr2sD8uWQ/pub)问题后换成了变长连续栈（类似于vector resizing，只适合内存托管的语言）。由于bthread基本只会在64位平台上使用，虚存空间庞大，对变长栈需求不明确。加上segmented stacks的性能有影响，bthread暂时没有变长栈的计划。
 
+
+# ========= ./new_protocol.md ========
 # server端多协议
 
 brpc server一个端口支持多种协议，大部分时候这对部署和运维更加方便。由于不同协议的格式大相径庭，严格地来说，一个端口很难无二义地支持所有协议。出于解耦和可扩展性的考虑，也不太可能集中式地构建一个针对所有协议的分类器。我们的做法就是把协议归三类后逐个尝试：
@@ -5814,6 +5970,8 @@ if (RegisterProtocol(PROTOCOL_HTTP, http_protocol) != 0) {
 }
 ```
 
+
+# ========= ./nshead_service.md ========
 ub是百度内广泛使用的老RPC框架，在迁移ub服务时不可避免地需要[访问ub-server](ub_client.md)或被ub-client访问。ub使用的协议种类很多，但都以nshead作为二进制包的头部，这类服务在brpc中统称为**“nshead service”**。
 
 nshead后大都使用mcpack/compack作为序列化格式，注意这不是“协议”。"协议"除了序列化格式，还涉及到各种特殊字段的定义，一种序列化格式可能会衍生出很多协议。ub没有定义标准协议，所以即使都使用mcpack或compack，产品线的通信协议也是五花八门，无法互通。鉴于此，我们提供了一套接口，让用户能够灵活的处理自己产品线的协议，同时享受brpc提供的builtin services等一系列框架福利。
@@ -5878,10 +6036,12 @@ service EchoService {
 
 ## 以插件方式运行protoc
 
-BRPC_PATH代表brpc产出的路径（包含bin include等目录），PROTOBUF_INCLUDE_PATH代表protobuf的包含路径。注意--mcpack_out要和--cpp_out一致。
+BRPC_PATH代表brpc产出的路径（包含bin include等目录），PROTOBUF_INCLUDE_PATH代表protobuf的包含路径。
+注意--mcpack_out要和--cpp_out一致。
 
 ```shell
-protoc --plugin=protoc-gen-mcpack=$BRPC_PATH/bin/protoc-gen-mcpack --cpp_out=. --mcpack_out=. --proto_path=$BRPC_PATH/include --proto_path=PROTOBUF_INCLUDE_PATH
+protoc --plugin=protoc-gen-mcpack=$BRPC_PATH/bin/protoc-gen-mcpack --cpp_out=. 
+--mcpack_out=. --proto_path=$BRPC_PATH/include --proto_path=PROTOBUF_INCLUDE_PATH
 ```
 
 ## 实现生成的Service基类
@@ -6045,6 +6205,8 @@ public:
 };
 ```
 
+
+# ========= ./overview.md ========
 [English version](../en/overview.md)
 
 # 什么是RPC?
@@ -6139,8 +6301,12 @@ brpc特别重视开发和维护效率, 你可以通过浏览器或curl[查看ser
 
 brpc和其他实现的性能对比见[这里](benchmark.md)。
 
+
+# ========= ./parallel_http.md ========
 parallel_http能同时访问大量的http服务（几万个），适合在命令行中查询线上所有server的内置信息，供其他工具进一步过滤和聚合。curl很难做到这点，即使多个curl以后台的方式运行，并行度一般也只有百左右，访问几万台机器需要等待极长的时间。
 
+
+# ========= ./redis_client.md ========
 [English version](../en/redis_client.md)
 
 [redis](http://redis.io/)是最近几年比较火的缓存服务，相比memcached在server端提供了更多的数据结构和操作方法，简化了用户的开发工作。为了使用户更快捷地访问redis并充分利用bthread的并发能力，brpc直接支持redis协议。示例程序：[example/redis_c++](https://github.com/brpc/brpc/tree/master/example/redis_c++/)
@@ -6399,6 +6565,8 @@ redis 127.0.0.1:6379> client getname
 "brpc-cli"
 ```
 
+
+# ========= ./rpc_press.md ========
 rpc_press无需写代码就压测各种rpc server，目前支持的协议有：
 
 - baidu_std
@@ -6510,6 +6678,8 @@ dummy_server启动时会在终端打印日志，一般按住ctrl点击那个链�
 
 A：因为协议兼容性问题，启动rpc_press的时候需要带上-baidu_protocol_use_fullname=false
 
+
+# ========= ./rpc_replay.md ========
 r31658后，brpc能随机地把一部分请求写入一些文件中，并通过rpc_replay工具回放。目前支持的协议有：baidu_std, hulu_pbrpc, sofa_pbrpc。
 
 # 获取工具
@@ -6620,6 +6790,8 @@ rpc_replay会默认启动一个仅监控用的dummy server。打开后可查看�
 
 上方的字段含义应该是自解释的，在此略过。下方是延时信息，第一项"avg"是10秒内的平均延时，最后一项"max"是10秒内的最大延时，其余以百分号结尾的则代表延时分位值，即有左侧这么多比例的请求延时小于右侧的延时（单位微秒）。性能测试需要关注99%之后的长尾区域。
 
+
+# ========= ./rpc_view.md ========
 rpc_view可以转发端口被限的server的内置服务。像百度内如果一个服务的端口不在8000-8999，就只能在命令行下使用curl查看它的内置服务，没有历史趋势和动态曲线，也无法点击链接，排查问题不方便。rpc_view是一个特殊的http proxy：把对它的所有访问都转为对目标server的访问。只要把rpc_view的端口能在浏览器中被访问，我们就能通过它看到原本不能直接看到的server了。
 
 # 获取工具
@@ -6658,6 +6830,8 @@ TRACE: 02-14 12:12:20:   * 0 src/brpc/server.cpp:771] Check out http://db-rpc-de
 
 ![img](../images/rpc_view_3.png)
 
+
+# ========= ./rpcz.md ========
 用户能通过/rpcz看到最近请求的详细信息，并可以插入注释（annotation），不同于tracing system（如[dapper](http://static.googleusercontent.com/media/research.google.com/en//pubs/archive/36356.pdf)）以全局视角看到整体系统的延时分布，rpcz更多是一个调试工具，虽然角色有所不同，但在brpc中rpcz和tracing的数据来源是一样的。当每秒请求数小于1万时，rpcz会记录所有的请求，超过1万时，rpcz会随机忽略一些请求把采样数控制在1万左右。rpcz可以淘汰时间窗口之前的数据，通过-span_keeping_seconds选项设置，默认1小时。[一个长期运行的例子](http://brpc.baidu.com:8765/rpcz)。
 
 关于开销：我们的实现完全规避了线程竞争，开销极小，在qps 30万的测试场景中，观察不到明显的性能变化，对大部分应用而言应该是“free”的。即使采集了几千万条请求，rpcz也不会增加很多内存，一般在50兆以内。rpcz会占用一些磁盘空间（就像日志一样），如果设定为存一个小时的数据，一般在几百兆左右。
@@ -6716,6 +6890,8 @@ TRACEPRINTF("Hello rpcz %d", 123);
 
 这条annotation会按其发生时间插入到对应请求的rpcz中。从这个角度看，rpcz是请求级的日志。如果你用TRACEPRINTF打印了沿路的上下文，便可看到请求在每个阶段停留的时间，牵涉到的数据集和参数。这是个很有用的功能。
 
+
+# ========= ./server.md ========
 [English version](../en/server.md)
 
 # 示例程序
@@ -7732,6 +7908,8 @@ process_io_write_second
 
 ![img](../images/server_side.png)
 
+
+# ========= ./server_debugging.md ========
 # 1.检查工作线程的数量
 
 查看 /vars/bthread_worker_**count** 和 /vars/bthread_worker_**usage**。分别是工作线程的个数，和正在被使用的工作线程个数。
@@ -7894,6 +8072,8 @@ void search() {
 
 得打开dummy server提供内置服务，方法见[这里](dummy_server.md)。
 
+
+# ========= ./server_push.md ========
 [English version](../en/server_push.md)
 
 # Server push
@@ -7922,6 +8102,8 @@ URL和参数中必须有足够的信息使回调知道这次调用对应某次�
 回调应处理[幂等问题](https://en.wikipedia.org/wiki/Idempotence)，server为了确保不漏通知，在网络出现问题时往往会多次重试，如果第一次的通知已经成功了，后续的通知就应该不产生效果。上节“远程事件”模式中的幂等性由RPC代劳，它会确保done只被调用一次。
 
 为了避免重要的通知被漏掉，用户往往还需灵活组合RPC和消息队列。RPC的时效性和开销都明显好于消息队列，但由于内存有限，在重试过一些次数后仍然失败的话，server就得把这部分内存空出来去做其他事情了。这时把通知放到消息队列中，利用其持久化能力做较长时间的重试直至成功，辅以回调的幂等性，就能使绝大部分通知既及时又不会被漏掉。
+
+# ========= ./status.md ========
 [English version](../en/status.md)
 
 [/status](http://brpc.baidu.com:8765/status)可以访问服务的主要统计信息。这些信息和/vars是同源的，但按服务重新组织方便查看。
@@ -7960,6 +8142,8 @@ public:
 
 ![img](../images/status_2.png)
 
+
+# ========= ./streaming_log.md ========
 # Name
 
 streaming_log - Print log to std::ostreams
@@ -8239,6 +8423,8 @@ TEST_F(StreamingLogTest, log_at) {
 }
 ```
 
+
+# ========= ./streaming_rpc.md ========
 [English version](../en/streaming_rpc.md)
 
 # 概述
@@ -8381,6 +8567,8 @@ int StreamClose(StreamId stream_id);
 ```
 
 
+
+# ========= ./thread_local.md ========
 本页说明bthread下使用pthread-local可能会导致的问题。bthread-local的使用方法见[这里](server.md#bthread-local)。
 
 # thread-local问题
@@ -8447,6 +8635,8 @@ Use *p ...                   -  still the errno of original pthread, undefined b
 
 需要说明的是，和errno类似，pthread_self也有类似的问题，不过一般pthread_self除了打日志没有其他用途，影响面较小，在`-D__const__=`后pthread_self也会正常。
 
+
+# ========= ./threading_overview.md ========
 [English version](../en/threading_overview.md)
 
 # 常见线程模型
@@ -8493,6 +8683,8 @@ Use *p ...                   -  still the errno of original pthread, undefined b
 
 共享指针在异步编程中很普遍，这看似方便，但也使内存的ownership变得难以捉摸，如果内存泄漏了，很难定位哪里没有释放；如果segment fault了，也不知道哪里多释放了一下。大量使用引用计数的用户代码很难控制代码质量，容易长期在内存问题上耗费时间。如果引用计数还需要手动维护，保持质量就更难了，维护者也不会愿意改进。没有上下文会使得[RAII](http://en.wikipedia.org/wiki/Resource_Acquisition_Is_Initialization)无法充分发挥作用, 有时需要在callback之外lock，callback之内unlock，实践中很容易出错。
 
+
+# ========= ./thrift.md ========
 [English Version](../en/thrift.md)
 
 [thrift](https://thrift.apache.org/)是应用较广的RPC框架，最初由Facebook发布，后交由Apache维护。为了和thrift服务互通，同时解决thrift原生方案在多线程安全、易用性、并发能力等方面的一系列问题，brpc实现并支持thrift在NonBlocking模式下的协议(FramedProtocol), 下文均直接称为thrift协议。
@@ -8640,6 +8832,8 @@ brpc thrift | 60 | 19.5w | 0.3ms | 22%
 native thrift | 60 | 1.7w | 3.5ms | 76%
 brpc thrift | 60 | 2.1w | 2.9ms | 93%
 
+
+# ========= ./timer_keeping.md ========
 在几点几分做某件事是RPC框架的基本需求，这件事比看上去难。
 
 让我们先来看看系统提供了些什么： posix系统能以[signal方式](http://man7.org/linux/man-pages/man2/timer_create.2.html)告知timer触发，不过signal逼迫我们使用全局变量，写[async-signal-safe](https://docs.oracle.com/cd/E19455-01/806-5257/gen-26/index.html)的函数，在面向用户的编程框架中，我们应当尽力避免使用signal。linux自2.6.27后能以[fd方式](http://man7.org/linux/man-pages/man2/timerfd_create.2.html)通知timer触发，这个fd可以放到epoll中和传输数据的fd统一管理。唯一问题是：这是个系统调用，且我们不清楚它在多线程下的表现。
@@ -8696,6 +8890,8 @@ brpc thrift | 60 | 2.1w | 2.9ms | 93%
 - 出于性能考虑，TimerThread使用wall-time，而不是单调时间，可能受到系统时间调整的影响。具体来说，如果在测试中把系统时间往前或往后调一个小时，程序行为将完全undefined。未来可能会让用户选择单调时间。
 - 在cpu支持nonstop_tsc和constant_tsc的机器上，brpc和bthread会优先使用基于rdtsc的cpuwide_time_us。那两个flag表示rdtsc可作为wall-time使用，不支持的机器上会转而使用较慢的内核时间。我们的机器（Intel Xeon系列）大都有那两个flag。rdtsc作为wall-time使用时是否会受到系统调整时间的影响，未测试不清楚。
 
+
+# ========= ./ub_client.md ========
 brpc可通过多种方式访问用ub搭建的服务。
 
 # ubrpc (by protobuf)
@@ -9067,6 +9263,8 @@ channel.CallMethod(NULL, &cntl, &request, &response, NULL);    // 假设channel�
 // Process response. response.data() is the buffer, response.size() is the length.
 ```
 
+
+# ========= ./vars.md ========
 [English version](../en/vars.md)
 
 [bvar](https://github.com/brpc/brpc/tree/master/src/bvar/)是多线程环境下的计数器类库，方便记录和查看用户程序中的各类数值，它利用了thread local存储减少了cache bouncing，相比UbMonitor(百度内的老计数器库)几乎不会给程序增加性能开销，也快于竞争频繁的原子操作。brpc集成了bvar，[/vars](http://brpc.baidu.com:8765/vars)可查看所有曝光的bvar，[/vars/VARNAME](http://brpc.baidu.com:8765/vars/rpc_socket_count)可查阅某个bvar，增加计数器的方法请查看[bvar](bvar.md)。brpc大量使用了bvar提供统计数值，当你需要在多线程环境中计数并展现时，应该第一时间想到bvar。但bvar不能代替所有的计数器，它的本质是把写时的竞争转移到了读：读得合并所有写过的线程中的数据，而不可避免地变慢了。当你读写都很频繁或得基于最新值做一些逻辑判断时，你不应该用bvar。
@@ -9168,4 +9366,3 @@ void foo() {
 ## 非brpc server
 
 如果你的程序只是一个brpc client或根本没有使用brpc，并且你也想看到动态曲线，看[这里](dummy_server.md)。
-
